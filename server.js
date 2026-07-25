@@ -9,93 +9,94 @@ const io = new Server(server, { cors: { origin: "*" } });
 app.use(express.static(__dirname));
 
 let players = {};
-let monsters = [];
-let nextMonsterId = 1;
+// Paleta de cores vibrantes para os jogadores
+const COLORS = ['#ff0055', '#00ffcc', '#ffcc00', '#ff00ff', '#00ff66', '#3399ff'];
 
-// Elementos mágicos disponíveis para os magos
-const ELEMENTS = ['Fogo 🔥', 'Gelo ❄️', 'Raio ⚡'];
-const ELEMENT_COLORS = { 'Fogo 🔥': '#ff4500', 'Gelo ❄️': '#00ffff', 'Raio ⚡': '#ffd700' };
-
-// Spawn de monstros/golens na arena
-setInterval(() => {
-  if (Object.keys(players).length > 0 && monsters.length < 8) {
-    const monster = {
-      id: nextMonsterId++,
-      x: Math.random() * 700 + 50,
-      y: Math.random() * 500 + 50,
-      hp: 4,
-      maxHp: 4,
-      size: 25
-    };
-    monsters.push(monster);
-    io.emit('spawnMonster', monster);
-  }
-}, 3500);
+// Tamanho da grade de pintura (20x15 blocos)
+const GRID_COLS = 20;
+const GRID_ROWS = 15;
+let grid = Array(GRID_ROWS).fill(null).map(() => Array(GRID_COLS).fill(null));
 
 io.on('connection', (socket) => {
-  console.log(`Mago conectado: ${socket.id}`);
+  console.log(`Jogador conectado: ${socket.id}`);
 
-  const chosenElement = ELEMENTS[Math.floor(Math.random() * ELEMENTS.length)];
+  // Escolhe uma cor disponível
+  const assignedColor = COLORS[Object.keys(players).length % COLORS.length];
 
   players[socket.id] = {
     id: socket.id,
-    x: 400,
-    y: 300,
-    element: chosenElement,
-    color: ELEMENT_COLORS[chosenElement],
-    name: `Mago_${socket.id.substring(0, 4)}`
+    x: Math.floor(Math.random() * 700 + 50),
+    y: Math.floor(Math.random() * 500 + 50),
+    color: assignedColor,
+    score: 0,
+    name: `Pintor_${socket.id.substring(0, 4)}`
   };
 
   // Envia estado inicial
-  socket.emit('currentPlayers', players);
-  socket.emit('currentMonsters', monsters);
+  socket.emit('init', { players, grid, cols: GRID_COLS, rows: GRID_ROWS });
   socket.broadcast.emit('newPlayer', players[socket.id]);
 
-  // Movimentação do Mago
-  socket.on('playerMove', (movementData) => {
-    if (players[socket.id]) {
-      players[socket.id].x = movementData.x;
-      players[socket.id].y = movementData.y;
-      socket.broadcast.emit('playerMoved', players[socket.id]);
-    }
-  });
+  // Movimento e Pintura
+  socket.on('playerMove', (data) => {
+    const p = players[socket.id];
+    if (!p) return;
 
-  // Conjurando Feitiço (Ataque)
-  socket.on('castSpell', (spellData) => {
-    const mage = players[socket.id];
-    if (!mage) return;
+    p.x = data.x;
+    p.y = data.y;
 
-    io.emit('spellCast', { ...spellData, color: mage.color, playerId: socket.id });
+    // Calcula qual bloco da grade o jogador está pisando
+    const col = Math.floor(p.x / (800 / GRID_COLS));
+    const row = Math.floor(p.y / (600 / GRID_ROWS));
 
-    // Verifica colisão com monstros
-    monsters.forEach((m, index) => {
-      const dist = Math.hypot(m.x - spellData.targetX, m.y - spellData.targetY);
-      if (dist < m.size + 15) {
-        m.hp -= 1;
-        if (m.hp <= 0) {
-          monsters.splice(index, 1);
-          io.emit('monsterDestroyed', m.id);
-        } else {
-          io.emit('monsterHit', { id: m.id, hp: m.hp });
-        }
+    if (row >= 0 && row < GRID_ROWS && col >= 0 && col < GRID_COLS) {
+      if (grid[row][col] !== p.color) {
+        grid[row][col] = p.color;
+        
+        // Recalcula pontuações
+        recalculateScores();
+        io.emit('gridUpdate', { row, col, color: p.color, players });
       }
-    });
+    }
+
+    socket.broadcast.emit('playerMoved', p);
   });
 
-  // Chat do Grimório/Guilda
+  // Chat
   socket.on('chatMessage', (msg) => {
     io.emit('chatMessage', {
-      sender: players[socket.id]?.name || 'Mago',
-      element: players[socket.id]?.element || '',
+      sender: players[socket.id]?.name || 'Pintor',
+      color: players[socket.id]?.color || '#fff',
       text: msg
     });
   });
 
   socket.on('disconnect', () => {
     delete players[socket.id];
-    io.emit('playerDisconnected', socket.id);
+    recalculateScores();
+    io.emit('playerDisconnected', { id: socket.id, players });
   });
 });
 
+function recalculateScores() {
+  const totalCells = GRID_COLS * GRID_ROWS;
+  let counts = {};
+
+  // Conta quantas células cada cor possui
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let c = 0; c < GRID_COLS; c++) {
+      const color = grid[r][c];
+      if (color) {
+        counts[color] = (counts[color] || 0) + 1;
+      }
+    }
+  }
+
+  // Atualiza a % de domínio de cada jogador
+  Object.values(players).forEach(p => {
+    const cellCount = counts[p.color] || 0;
+    p.score = Math.round((cellCount / totalCells) * 100);
+  });
+}
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Arena de Magia ativa na porta ${PORT}`));
+server.listen(PORT, () => console.log(`Servidor de Pintura rodando na porta ${PORT}`));
