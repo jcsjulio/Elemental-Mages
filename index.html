@@ -1,276 +1,145 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <title>Territory Rush: Domínio de Arena 🎨</title>
-  <style>
-    body {
-      background: #09090e;
-      color: #fff;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      margin: 0;
-      gap: 20px;
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
+
+app.use(express.static(__dirname));
+
+let players = {};
+
+const BASE_COLORS = [
+  '#ff0055', '#00ffcc', '#ffcc00', '#ff00ff', 
+  '#00ff66', '#3399ff', '#ff6600', '#9933ff'
+];
+
+const GRID_COLS = 20;
+const GRID_ROWS = 15;
+let grid = createEmptyGrid();
+
+// Configuração do Timer (60 segundos por rodada)
+const ROUND_TIME = 60; 
+let timeLeft = ROUND_TIME;
+
+function createEmptyGrid() {
+  return Array(GRID_ROWS).fill(null).map(() => Array(GRID_COLS).fill(null));
+}
+
+function getUniqueColor() {
+  const usedColors = Object.values(players).map(p => p.color);
+  const availableColor = BASE_COLORS.find(color => !usedColors.includes(color));
+  if (availableColor) return availableColor;
+
+  let randomColor;
+  let attempts = 0;
+  do {
+    const hue = Math.floor(Math.random() * 360);
+    randomColor = `hsl(${hue}, 100%, 50%)`;
+    attempts++;
+  } while (usedColors.includes(randomColor) && attempts < 50);
+
+  return randomColor;
+}
+
+// Loop do Timer no Servidor (1 tick por segundo)
+setInterval(() => {
+  if (Object.keys(players).length > 0) {
+    timeLeft--;
+
+    if (timeLeft <= 0) {
+      // Fim da rodada: Encontra o vencedor
+      const sortedPlayers = Object.values(players).sort((a, b) => b.score - a.score);
+      const winner = sortedPlayers[0] || null;
+
+      io.emit('roundOver', { winner });
+
+      // Reseta o mapa e o timer
+      grid = createEmptyGrid();
+      timeLeft = ROUND_TIME;
+      recalculateScores();
+
+      setTimeout(() => {
+        io.emit('roundStart', { grid, players, timeLeft });
+      }, 3000); // 3 segundos de pausa para exibir o vencedor
+    } else {
+      io.emit('timerUpdate', timeLeft);
     }
-    #game-container {
-      position: relative;
-    }
-    canvas {
-      border: 3px solid #222;
-      background: #111;
-      box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
-      border-radius: 8px;
-    }
-    #side-panel {
-      width: 300px;
-      height: 600px;
-      display: flex;
-      flex-direction: column;
-      gap: 15px;
-    }
-    .panel-card {
-      background: #161622;
-      border: 1px solid #2a2a3d;
-      border-radius: 8px;
-      padding: 15px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    }
-    h3 {
-      margin: 0 0 10px 0;
-      font-size: 1.1rem;
-      color: #8a8acb;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-    }
-    #leaderboard-list {
-      list-style: none;
-      padding: 0;
-      margin: 0;
-    }
-    #leaderboard-list li {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 8px 10px;
-      margin-bottom: 6px;
-      background: #1f1f30;
-      border-radius: 6px;
-      font-weight: bold;
-    }
-    #chat-messages {
-      height: 220px;
-      overflow-y: auto;
-      font-size: 0.85rem;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    #chat-input-container {
-      display: flex;
-      margin-top: 10px;
-      gap: 5px;
-    }
-    #chat-input {
-      flex: 1;
-      background: #09090e;
-      border: 1px solid #333;
-      color: #fff;
-      padding: 8px;
-      border-radius: 4px;
-      outline: none;
-    }
-    #send-btn {
-      background: #4f46e5;
-      color: #fff;
-      border: none;
-      padding: 8px 12px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-weight: bold;
-    }
-  </style>
-</head>
-<body>
+  }
+}, 1000);
 
-  <div id="game-container">
-    <canvas id="canvas" width="800" height="600"></canvas>
-  </div>
+io.on('connection', (socket) => {
+  console.log(`Jogador conectado: ${socket.id}`);
 
-  <div id="side-panel">
-    <div class="panel-card">
-      <h3>🏆 Placar de Domínio</h3>
-      <ul id="leaderboard-list"></ul>
-    </div>
+  const playerColor = getUniqueColor();
 
-    <div class="panel-card" style="flex: 1; display: flex; flex-direction: column;">
-      <h3>💬 Chat da Arena</h3>
-      <div id="chat-messages"></div>
-      <div id="chat-input-container">
-        <input type="text" id="chat-input" placeholder="Conversar..." />
-        <button id="send-btn" onclick="sendMessage()">Enviar</button>
-      </div>
-    </div>
-  </div>
+  players[socket.id] = {
+    id: socket.id,
+    x: Math.floor(Math.random() * 700 + 50),
+    y: Math.floor(Math.random() * 500 + 50),
+    color: playerColor,
+    score: 0,
+    name: `Pintor_${socket.id.substring(0, 4)}`
+  };
 
-  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
-  <script>
-    const socket = io('https://elemental-mages.onrender.com');
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+  socket.emit('init', { players, grid, cols: GRID_COLS, rows: GRID_ROWS, timeLeft });
+  socket.broadcast.emit('newPlayer', players[socket.id]);
 
-    let players = {};
-    let cols = 20, rows = 15;
-    let grid = Array(rows).fill(null).map(() => Array(cols).fill(null));
-    let myId = null;
+  socket.on('playerMove', (data) => {
+    const p = players[socket.id];
+    if (!p) return;
 
-    let myPos = { x: 400, y: 300 };
-    const speed = 6;
-    const keys = {};
+    p.x = data.x;
+    p.y = data.y;
 
-    window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
-    window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+    const col = Math.floor(p.x / (800 / GRID_COLS));
+    const row = Math.floor(p.y / (600 / GRID_ROWS));
 
-    socket.on('init', (data) => {
-      myId = socket.id;
-      players = data.players || {};
-      grid = data.grid || grid;
-      cols = data.cols || cols;
-      rows = data.rows || rows;
-
-      if (players[myId]) {
-        myPos.x = players[myId].x;
-        myPos.y = players[myId].y;
-      }
-      updateLeaderboard();
-    });
-
-    socket.on('newPlayer', (p) => { 
-      players[p.id] = p; 
-      updateLeaderboard();
-    });
-
-    socket.on('playerMoved', (p) => { 
-      if (players[p.id] && p.id !== myId) {
-        players[p.id].x = p.x;
-        players[p.id].y = p.y;
-      } 
-    });
-
-    socket.on('gridUpdate', (data) => {
-      if (grid[data.row]) grid[data.row][data.col] = data.color;
-      players = data.players || players;
-      updateLeaderboard();
-    });
-
-    socket.on('playerDisconnected', (data) => { 
-      delete players[data.id]; 
-      if (data.players) players = data.players;
-      updateLeaderboard();
-    });
-
-    socket.on('chatMessage', (data) => {
-      const msgDiv = document.getElementById('chat-messages');
-      msgDiv.innerHTML += `<div><span style="color:${data.color}; font-weight:bold;">${data.sender}:</span> ${data.text}</div>`;
-      msgDiv.scrollTop = msgDiv.scrollHeight;
-    });
-
-    function sendMessage() {
-      const input = document.getElementById('chat-input');
-      if(input.value.trim() !== '') {
-        socket.emit('chatMessage', input.value);
-        input.value = '';
+    if (row >= 0 && row < GRID_ROWS && col >= 0 && col < GRID_COLS) {
+      if (grid[row][col] !== p.color) {
+        grid[row][col] = p.color;
+        recalculateScores();
+        io.emit('gridUpdate', { row, col, color: p.color, players });
       }
     }
 
-    function updateLeaderboard() {
-      const list = document.getElementById('leaderboard-list');
-      if (!list) return;
-      list.innerHTML = '';
+    socket.broadcast.emit('playerMoved', p);
+  });
 
-      const sorted = Object.values(players).sort((a, b) => (b.score || 0) - (a.score || 0));
+  socket.on('chatMessage', (msg) => {
+    io.emit('chatMessage', {
+      sender: players[socket.id]?.name || 'Pintor',
+      color: players[socket.id]?.color || '#fff',
+      text: msg
+    });
+  });
 
-      sorted.forEach((p, index) => {
-        const li = document.createElement('li');
-        li.style.borderLeft = `5px solid ${p.color || '#fff'}`;
-        li.innerHTML = `
-          <span>#${index + 1} ${p.name || 'Pintor'} ${p.id === myId ? '(Você)' : ''}</span>
-          <span>${p.score || 0}%</span>
-        `;
-        list.appendChild(li);
-      });
-    }
+  socket.on('disconnect', () => {
+    delete players[socket.id];
+    recalculateScores();
+    io.emit('playerDisconnected', { id: socket.id, players });
+  });
+});
 
-    let lastEmit = 0;
-    function update() {
-      let moved = false;
-      if (keys['w'] || keys['arrowup']) { myPos.y -= speed; moved = true; }
-      if (keys['s'] || keys['arrowdown']) { myPos.y += speed; moved = true; }
-      if (keys['a'] || keys['arrowleft']) { myPos.x -= speed; moved = true; }
-      if (keys['d'] || keys['arrowright']) { myPos.x += speed; moved = true; }
+function recalculateScores() {
+  const totalCells = GRID_COLS * GRID_ROWS;
+  let counts = {};
 
-      myPos.x = Math.max(15, Math.min(canvas.width - 15, myPos.x));
-      myPos.y = Math.max(15, Math.min(canvas.height - 15, myPos.y));
-
-      if (myId && players[myId]) {
-        players[myId].x = myPos.x;
-        players[myId].y = myPos.y;
-      }
-
-      const now = Date.now();
-      if (moved && now - lastEmit > 25) {
-        socket.emit('playerMove', myPos);
-        lastEmit = now;
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let c = 0; c < GRID_COLS; c++) {
+      const color = grid[r][c];
+      if (color) {
+        counts[color] = (counts[color] || 0) + 1;
       }
     }
+  }
 
-    function draw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+  Object.values(players).forEach(p => {
+    const cellCount = counts[p.color] || 0;
+    p.score = Math.round((cellCount / totalCells) * 100);
+  });
+}
 
-      const cellW = canvas.width / cols;
-      const cellH = canvas.height / rows;
-
-      // Desenha a Grade
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          const color = grid[r] ? grid[r][c] : null;
-          if (color) {
-            ctx.fillStyle = color;
-            ctx.globalAlpha = 0.6;
-            ctx.fillRect(c * cellW, r * cellH, cellW - 1, cellH - 1);
-            ctx.globalAlpha = 1.0;
-          } else {
-            ctx.strokeStyle = '#1e1e2d';
-            ctx.strokeRect(c * cellW, r * cellH, cellW, cellH);
-          }
-        }
-      }
-
-      // Desenha Jogadores
-      Object.values(players).forEach(p => {
-        if (!p.x || !p.y) return;
-        ctx.fillStyle = p.color || '#00ffcc';
-        ctx.shadowColor = p.color || '#00ffcc';
-        ctx.shadowBlur = 12;
-
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = '#fff';
-        ctx.font = '11px Segoe UI';
-        ctx.textAlign = 'center';
-        ctx.fillText(p.name || 'Pintor', p.x, p.y - 18);
-      });
-
-      update();
-      requestAnimationFrame(draw);
-    }
-
-    draw();
-  </script>
-</body>
-</html>
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
