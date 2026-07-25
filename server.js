@@ -10,31 +10,28 @@ app.use(express.static(__dirname));
 
 let players = {};
 
-// Paleta de cores vibrantes base
 const BASE_COLORS = [
-  '#ff0055', // Rosa Neon
-  '#00ffcc', // Ciano
-  '#ffcc00', // Amarelo
-  '#ff00ff', // Magenta
-  '#00ff66', // Verde Neon
-  '#3399ff', // Azul
-  '#ff6600', // Laranja
-  '#9933ff'  // Roxo
+  '#ff0055', '#00ffcc', '#ffcc00', '#ff00ff', 
+  '#00ff66', '#3399ff', '#ff6600', '#9933ff'
 ];
 
 const GRID_COLS = 20;
 const GRID_ROWS = 15;
-let grid = Array(GRID_ROWS).fill(null).map(() => Array(GRID_COLS).fill(null));
+let grid = createEmptyGrid();
 
-// Função para garantir uma cor 100% única para cada jogador
+// Configuração do Timer (60 segundos por rodada)
+const ROUND_TIME = 60; 
+let timeLeft = ROUND_TIME;
+
+function createEmptyGrid() {
+  return Array(GRID_ROWS).fill(null).map(() => Array(GRID_COLS).fill(null));
+}
+
 function getUniqueColor() {
   const usedColors = Object.values(players).map(p => p.color);
-  
-  // 1. Procura a primeira cor da paleta base que não esteja em uso
   const availableColor = BASE_COLORS.find(color => !usedColors.includes(color));
   if (availableColor) return availableColor;
 
-  // 2. Se todas as cores base estiverem ocupadas, gera uma cor HSL vibrante aleatória que seja diferente das usadas
   let randomColor;
   let attempts = 0;
   do {
@@ -46,10 +43,35 @@ function getUniqueColor() {
   return randomColor;
 }
 
+// Loop do Timer no Servidor (1 tick por segundo)
+setInterval(() => {
+  if (Object.keys(players).length > 0) {
+    timeLeft--;
+
+    if (timeLeft <= 0) {
+      // Fim da rodada: Encontra o vencedor
+      const sortedPlayers = Object.values(players).sort((a, b) => b.score - a.score);
+      const winner = sortedPlayers[0] || null;
+
+      io.emit('roundOver', { winner });
+
+      // Reseta o mapa e o timer
+      grid = createEmptyGrid();
+      timeLeft = ROUND_TIME;
+      recalculateScores();
+
+      setTimeout(() => {
+        io.emit('roundStart', { grid, players, timeLeft });
+      }, 3000); // 3 segundos de pausa para exibir o vencedor
+    } else {
+      io.emit('timerUpdate', timeLeft);
+    }
+  }
+}, 1000);
+
 io.on('connection', (socket) => {
   console.log(`Jogador conectado: ${socket.id}`);
 
-  // Atribui uma cor totalmente única
   const playerColor = getUniqueColor();
 
   players[socket.id] = {
@@ -61,8 +83,7 @@ io.on('connection', (socket) => {
     name: `Pintor_${socket.id.substring(0, 4)}`
   };
 
-  // Envia estado inicial
-  socket.emit('init', { players, grid, cols: GRID_COLS, rows: GRID_ROWS });
+  socket.emit('init', { players, grid, cols: GRID_COLS, rows: GRID_ROWS, timeLeft });
   socket.broadcast.emit('newPlayer', players[socket.id]);
 
   socket.on('playerMove', (data) => {
@@ -121,4 +142,4 @@ function recalculateScores() {
 }
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Servidor de Pintura com Cores Únicas na porta ${PORT}`));
+server.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
