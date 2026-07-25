@@ -100,13 +100,11 @@
   </div>
 
   <div id="side-panel">
-    <!-- Placar ao Vivo -->
     <div class="panel-card">
       <h3>🏆 Placar de Domínio</h3>
       <ul id="leaderboard-list"></ul>
     </div>
 
-    <!-- Chat -->
     <div class="panel-card" style="flex: 1; display: flex; flex-direction: column;">
       <h3>💬 Chat da Arena</h3>
       <div id="chat-messages"></div>
@@ -124,8 +122,8 @@
     const ctx = canvas.getContext('2d');
 
     let players = {};
-    let grid = [];
     let cols = 20, rows = 15;
+    let grid = Array(rows).fill(null).map(() => Array(cols).fill(null));
     let myId = null;
 
     let myPos = { x: 400, y: 300 };
@@ -135,13 +133,12 @@
     window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
     window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
-    // Eventos Sincronizados
     socket.on('init', (data) => {
       myId = socket.id;
-      players = data.players;
-      grid = data.grid;
-      cols = data.cols;
-      rows = data.rows;
+      players = data.players || {};
+      grid = data.grid || grid;
+      cols = data.cols || cols;
+      rows = data.rows || rows;
 
       if (players[myId]) {
         myPos.x = players[myId].x;
@@ -163,18 +160,17 @@
     });
 
     socket.on('gridUpdate', (data) => {
-      grid[data.row][data.col] = data.color;
-      players = data.players;
+      if (grid[data.row]) grid[data.row][data.col] = data.color;
+      players = data.players || players;
       updateLeaderboard();
     });
 
     socket.on('playerDisconnected', (data) => { 
       delete players[data.id]; 
-      players = data.players;
+      if (data.players) players = data.players;
       updateLeaderboard();
     });
 
-    // Chat
     socket.on('chatMessage', (data) => {
       const msgDiv = document.getElementById('chat-messages');
       msgDiv.innerHTML += `<div><span style="color:${data.color}; font-weight:bold;">${data.sender}:</span> ${data.text}</div>`;
@@ -189,25 +185,24 @@
       }
     }
 
-    // Atualiza o Ranking no painel lateral
     function updateLeaderboard() {
       const list = document.getElementById('leaderboard-list');
+      if (!list) return;
       list.innerHTML = '';
 
-      const sorted = Object.values(players).sort((a, b) => b.score - a.score);
+      const sorted = Object.values(players).sort((a, b) => (b.score || 0) - (a.score || 0));
 
       sorted.forEach((p, index) => {
         const li = document.createElement('li');
-        li.style.borderLeft = `5px solid ${p.color}`;
+        li.style.borderLeft = `5px solid ${p.color || '#fff'}`;
         li.innerHTML = `
-          <span>#${index + 1} ${p.name} ${p.id === myId ? '(Você)' : ''}</span>
-          <span>${p.score}%</span>
+          <span>#${index + 1} ${p.name || 'Pintor'} ${p.id === myId ? '(Você)' : ''}</span>
+          <span>${p.score || 0}%</span>
         `;
         list.appendChild(li);
       });
     }
 
-    // Loop de Movimento (Super Fluido)
     let lastEmit = 0;
     function update() {
       let moved = false;
@@ -219,7 +214,7 @@
       myPos.x = Math.max(15, Math.min(canvas.width - 15, myPos.x));
       myPos.y = Math.max(15, Math.min(canvas.height - 15, myPos.y));
 
-      if (players[myId]) {
+      if (myId && players[myId]) {
         players[myId].x = myPos.x;
         players[myId].y = myPos.y;
       }
@@ -237,13 +232,13 @@
       const cellW = canvas.width / cols;
       const cellH = canvas.height / rows;
 
-      // 1. Desenha a Grade Pintada
+      // Desenha a Grade
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const color = grid[r] ? grid[r][c] : null;
           if (color) {
             ctx.fillStyle = color;
-            ctx.globalAlpha = 0.6; // Transparência elegante
+            ctx.globalAlpha = 0.6;
             ctx.fillRect(c * cellW, r * cellH, cellW - 1, cellH - 1);
             ctx.globalAlpha = 1.0;
           } else {
@@ -253,23 +248,22 @@
         }
       }
 
-      // 2. Desenha os Jogadores (Rastros e Avatares)
+      // Desenha Jogadores
       Object.values(players).forEach(p => {
-        // Brilho do Jogador
-        ctx.fillStyle = p.color;
-        ctx.shadowColor = p.color;
-        ctx.shadowBlur = 15;
+        if (!p.x || !p.y) return;
+        ctx.fillStyle = p.color || '#00ffcc';
+        ctx.shadowColor = p.color || '#00ffcc';
+        ctx.shadowBlur = 12;
 
         ctx.beginPath();
         ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
         ctx.fill();
 
-        // Nome acima da cabeça
         ctx.shadowBlur = 0;
         ctx.fillStyle = '#fff';
         ctx.font = '11px Segoe UI';
         ctx.textAlign = 'center';
-        ctx.fillText(p.name, p.x, p.y - 20);
+        ctx.fillText(p.name || 'Pintor', p.x, p.y - 18);
       });
 
       update();
